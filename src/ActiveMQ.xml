@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:context="http://www.springframework.org/schema/context"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:amq="http://activemq.apache.org/schema/core"
+	xmlns:jms="http://www.springframework.org/schema/jms"
+	xsi:schemaLocation="http://www.springframework.org/schema/beans   
+        http://www.springframework.org/schema/beans/spring-beans-4.0.xsd   
+        http://www.springframework.org/schema/context   
+        http://www.springframework.org/schema/context/spring-context-4.0.xsd
+        http://www.springframework.org/schema/jms
+        http://www.springframework.org/schema/jms/spring-jms-4.0.xsd
+        http://activemq.apache.org/schema/core
+        http://activemq.apache.org/schema/core/activemq-core-5.8.0.xsd">
+
+
+	<!-- 
+		Spring提供的ConnectionFactory只是Spring用于管理ConnectionFactory的，
+			真正产生到JMS服务器链接的ConnectionFactory还得是由JMS服务厂商提供，
+			并且需要把它注入到Spring提供的ConnectionFactory中。
+			我们这里使用的是ActiveMQ实现的JMS，
+			所以在我们这里真正的可以产生Connection的就应该是由ActiveMQ提供的ConnectionFactory 
+			
+	-->
+	
+	<!-- ActiveMQ 连接工厂 -->
+ 	<!-- 真正可以产生Connection的ConnectionFactory，由对应的 JMS服务厂商提供-->
+	<!-- 如果连接网络：tcp://ip:61616；未连接网络：tcp://localhost:61616 以及用户名，密码-->
+	<amq:connectionFactory id="amqConnectionFactory"
+		brokerURL="tcp://192.168.0.121:61616" userName="admin" password="admin"  />
+
+	<!-- Spring Caching连接工厂 -->
+ 	<!-- Spring用于管理真正的ConnectionFactory的ConnectionFactory -->  
+	<bean id="connectionFactory" class="org.springframework.jms.connection.CachingConnectionFactory">
+		<!-- 目标ConnectionFactory对应真实的可以产生JMS Connection的ConnectionFactory -->  
+  		<property name="targetConnectionFactory" ref="amqConnectionFactory"></property>
+  		<!-- 同上，同理 -->
+		<!-- <constructor-arg ref="amqConnectionFactory" /> -->
+		<!-- Session缓存数量 -->
+		<property name="sessionCacheSize" value="100" />
+	</bean>
+	
+	
+	<!-- 
+		配置好ConnectionFactory之后我们就需要配置生产者。生产者负责产生消息并发送到JMS服务器。
+		但是我们要怎么进行消息发送呢？通常是利用Spring为我们提供的JmsTemplate类来实现的，
+		所以配置生产者其实最核心的就是配置消息发送的JmsTemplate。对于消息发送者而言，它在发送消息的时候要知道自己该往哪里发，
+		为此，我们在定义JmsTemplate的时候需要注入一个Spring提供的ConnectionFactory对象。
+		在利用JmsTemplate进行消息发送的时候，我们需要知道发送哪种消息类型：
+			一个是点对点的ActiveMQQueue，另一个就是支持订阅/发布模式的ActiveMQTopic
+	 -->
+	
+	<!-- Spring JmsTemplate 的消息生产者 start-->
+	<!-- 定义JmsTemplate的Queue类型 -->
+	<bean id="jmsQueueTemplate" class="org.springframework.jms.core.JmsTemplate">
+		<!-- 这个connectionFactory对应的是我们定义的Spring提供的那个ConnectionFactory对象 -->  
+		<constructor-arg ref="connectionFactory" />
+		<!-- 非pub/sub模型（发布/订阅），即队列模式 -->
+		<property name="pubSubDomain" value="false" />
+	</bean>
+	
+	<!-- 定义JmsTemplate的Topic类型 -->
+	<bean id="jmsTopicTemplate" class="org.springframework.jms.core.JmsTemplate">
+		 <!-- 这个connectionFactory对应的是我们定义的Spring提供的那个ConnectionFactory对象 -->  
+		<constructor-arg ref="connectionFactory" />
+		<!-- pub/sub模型（发布/订阅） -->
+		<property name="pubSubDomain" value="true" />
+		
+		
+		<property name="explicitQosEnabled" value="true"/><!-- deliveryMode, priority, timeToLive 的开关，要生效，必须配置为true，默认false--> 
+		<property name="deliveryMode" value="2" />
+	</bean>
+	
+	<!--Spring JmsTemplate 的消息生产者 end-->
+
+	
+	<!-- 
+		那么消费者是如何知道有生产者发送消息到指定目的地Destination了呢？
+			每个消费者对应每个目的地都需要有对应的MessageListenerContainer。
+			对于消息监听容器而言，除了要知道监听哪个目的地之外，还需要知道到哪里去监听，
+			也就是说它还需要知道去监听哪个JMS服务器，
+			通过配置MessageListenerContainer的时候往里面注入一个ConnectionFactory来实现的。
+			所以我们在配置一个MessageListenerContainer的时候有三个属性必须指定：
+				一个是表示从哪里监听的ConnectionFactory；
+				一个是表示监听什么的Destination；
+				一个是接收到消息以后进行消息处理的MessageListener。
+	 -->
+	
+	<!-- 消息消费者 start-->
+	<!-- 定义Queue监听器 -->
+	<jms:listener-container destination-type="queue" container-type="default" connection-factory="connectionFactory" acknowledge="auto">
+		<jms:listener destination="test.queue" ref="queueReceiver1" subscription="true"/>		<!--destination中得值是消息发送的目的地和接受消息的地址  -->
+		<jms:listener destination="test.queue" ref="queueReceiver2"/>
+	</jms:listener-container>
+	
+	<!-- 定义Topic监听器 -->
+	<jms:listener-container destination-type="topic" container-type="default" connection-factory="connectionFactory" acknowledge="auto">
+		<jms:listener destination="test.topic" ref="topicReceiver1"/>		<!--destination中得值是消息发送的目的地和接受消息的地址  -->
+		<jms:listener destination="test.topic" ref="topicReceiver2"/>
+		<jms:listener destination="test.topic" ref="top"/>
+	</jms:listener-container>
+	
+	<!-- 消息消费者 end -->
+</beans>  
